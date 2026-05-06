@@ -979,6 +979,8 @@ def _flash_attn_fwd(
             ]
             if arch // 10 in [10, 11]:
                 compile_args.insert(-3, descale_tensors_tensor)
+            if use_dedicated_hd256_kernel:
+                compile_args[-1:-1] = [max_seqlen_q, max_seqlen_k]
             _flash_attn_fwd.compile_cache[compile_key] = cute.compile(*compile_args, options="--enable-tvm-ffi")
 
     if not is_fake_mode():
@@ -1046,6 +1048,8 @@ def _flash_attn_fwd(
                 else None,
                 aux_tensors,
             ])
+            if use_dedicated_hd256_kernel:
+                call_args.extend([max_seqlen_q, max_seqlen_k])
             _flash_attn_fwd.compile_cache[compile_key](*call_args)
     if is_split_kv:
         _flash_attn_fwd_combine(
@@ -1830,6 +1834,7 @@ def _flash_attn_bwd(
             dV_semaphore_tensor,
             cute_aux_tensors,
             sparse_tensors_compile,
+            *([max_seqlen_q, max_seqlen_k] if use_dedicated_hd256_kernel else []),
             current_stream,
             options="--enable-tvm-ffi",
         )
@@ -1866,6 +1871,7 @@ def _flash_attn_bwd(
             )
             if normalized_block_sparse_tensors is not None
             else None,
+            *([max_seqlen_q, max_seqlen_k] if use_dedicated_hd256_kernel else []),
         )
     # Postprocess: convert dq_accum from float32 to dq in bf16/fp16
     # hd=256 2CTA backward has its own internal postprocess, skip here.

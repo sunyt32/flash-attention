@@ -164,6 +164,8 @@ class BlackwellFusedMultiHeadAttentionBackwardDQKernel:
         cum_seqlen_q: Optional[cute.Tensor],
         cum_seqlen_k: Optional[cute.Tensor],
         scale_softmax: cutlass.Float32,
+        max_seqlen_q: Int32 | int | None,
+        max_seqlen_k: Int32 | int | None,
         stream: cuda.CUstream,
     ):
         varlen = cum_seqlen_q is not None or cum_seqlen_k is not None
@@ -180,6 +182,11 @@ class BlackwellFusedMultiHeadAttentionBackwardDQKernel:
             b = cum_seqlen_k.shape[0] - 1
         else:
             b = q_tensor.shape[0]
+        # Varlen packed tensors use total_q as their physical extent, but the
+        # static scheduler still needs the per-batch maximum sequence length.
+        s_q_grid = s_q
+        if cutlass.const_expr(cum_seqlen_q is not None and max_seqlen_q is not None):
+            s_q_grid = max_seqlen_q
         # `lse_tensor` / `sum_odo_tensor` are preallocated FP32 buffers (lse_log2 / dpsum)
         # whose sequence dimension is padded (rounded up) by the caller.
         # Use their leading dimension as the LSE length to ensure correct batch strides.
@@ -256,13 +263,13 @@ class BlackwellFusedMultiHeadAttentionBackwardDQKernel:
 
         if cutlass.const_expr(self.use_clc_scheduler):
             self.tile_sched_params, grid = compute_grid_clc(
-                (s_q, dq.shape[1], dq.shape[2]) if cum_seqlen_q is not None else dq.shape,
+                (s_q_grid, dq.shape[1], dq.shape[2]) if cum_seqlen_q is not None else dq.shape,
                 self.cta_tiler,
                 (*self.cluster_shape_mn, 1),
             )
         else:
             self.tile_sched_params, grid = compute_grid(
-                (s_q, dq.shape[1], dq.shape[2]) if cum_seqlen_q is not None else dq.shape,
+                (s_q_grid, dq.shape[1], dq.shape[2]) if cum_seqlen_q is not None else dq.shape,
                 self.cta_tiler,
                 self.is_persistent,
             )

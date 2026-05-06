@@ -215,6 +215,8 @@ class BlackwellFusedMultiHeadAttentionBackwardDKDVKernel:
         cumulative_s_q: cute.Tensor | None,
         cumulative_s_k: cute.Tensor | None,
         scale_softmax: cutlass.Float32,
+        max_seqlen_q: Int32 | int | None,
+        max_seqlen_k: Int32 | int | None,
         stream: cuda.CUstream,
     ):
         """Host function to launch CuTeDSL kernel."""
@@ -228,9 +230,17 @@ class BlackwellFusedMultiHeadAttentionBackwardDKDVKernel:
             b = cumulative_s_k.shape[0] - 1
         else:
             b = Q.shape[0]
+        # Keep layouts on total_{q,k}; only the scheduler problem shape should
+        # use max_seqlen_{q,k} for packed varlen inputs.
+        problem_shape_q = Q.shape[1]
+        problem_shape_k = K.shape[1]
+        if cutlass.const_expr(cumulative_s_q is not None and max_seqlen_q is not None):
+            problem_shape_q = max_seqlen_q
+        if cutlass.const_expr(cumulative_s_k is not None and max_seqlen_k is not None):
+            problem_shape_k = max_seqlen_k
         problem_shape = (
-            Q.shape[1],
-            K.shape[1],
+            problem_shape_q,
+            problem_shape_k,
             Q.shape[4],
             ((h_r, h_k), b),
         )

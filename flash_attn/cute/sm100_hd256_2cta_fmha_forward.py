@@ -180,6 +180,8 @@ class BlackwellFusedMultiHeadAttentionForward:
         descale_tensors: Optional[DescaleTensors] = None,
         blocksparse_tensors: Optional[cute.Tensor] = None,
         aux_tensors: Optional[list] = None,
+        max_seqlen_q: Int32 | int | None = None,
+        max_seqlen_k: Int32 | int | None = None,
         stream: cuda.CUstream = None,
     ):
         # Keep parity with FlashAttentionForwardSm100.__call__ interface.
@@ -264,6 +266,12 @@ class BlackwellFusedMultiHeadAttentionForward:
             b = mCuSeqlensK.shape[0] - 1
         else:
             b = mQ.shape[0]
+
+        # Varlen packed tensors use total_q as their physical extent, but the
+        # static scheduler still needs the per-batch maximum sequence length.
+        s_q_grid = s_q
+        if cutlass.const_expr(cum_seqlen_q is not None and max_seqlen_q is not None):
+            s_q_grid = max_seqlen_q
 
         scale_softmax = softmax_scale
         scale_softmax_log2 = softmax_scale * math.log2(math.exp(1.0))
@@ -359,13 +367,13 @@ class BlackwellFusedMultiHeadAttentionForward:
 
         if cutlass.const_expr(self.use_clc_scheduler):
             self.tile_sched_params, grid = compute_grid_clc(
-                (s_q, o.shape[1], o.shape[2]) if cum_seqlen_q is not None else o.shape,
+                (s_q_grid, o.shape[1], o.shape[2]) if cum_seqlen_q is not None else o.shape,
                 self.cta_tiler,
                 (*self.cluster_shape_mn, 1),
             )
         else:
             self.tile_sched_params, grid = compute_grid(
-                (s_q, o.shape[1], o.shape[2]) if cum_seqlen_q is not None else o.shape,
+                (s_q_grid, o.shape[1], o.shape[2]) if cum_seqlen_q is not None else o.shape,
                 self.cta_tiler,
                 self.is_persistent,
             )
